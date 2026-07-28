@@ -80,7 +80,7 @@ jobs:
             delete manifest.publishConfig;
             writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}${String.fromCharCode(10)}`);
           ' "$staging_directory/package/package.json" "$github_package"
-          npm publish "$staging_directory/package" --registry="$registry"
+          npm publish "$staging_directory/package" --registry="$registry" --ignore-scripts
 
       - name: Create GitHub Release
         env:

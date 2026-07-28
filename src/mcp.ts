@@ -221,7 +221,7 @@ export class DirectMcpBridge {
             rpcResult(id, {
               protocolVersion,
               capabilities: { tools: {} },
-              serverInfo: { name: "xpuoj-local-api", version: "0.3.2" },
+              serverInfo: { name: "xpuoj-local-api", version: "0.3.3" },
               instructions:
                 "XPUOJ reads the active local browser sign-in and calls the official API directly. No browser extension, page bridge, or Connect action is required."
             })

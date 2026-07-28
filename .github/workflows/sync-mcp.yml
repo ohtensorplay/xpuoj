@@ -1,10 +1,9 @@
 name: Sync MCP to MEGA
 
 on:
-  release:
-    types:
-      - published
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -18,7 +17,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || 'main' }}
+          ref: ${{ github.ref_name }}
 
       - name: Sync MCP distribution
         uses: ohtensorplay/hub-sync@v1

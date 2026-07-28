@@ -8,6 +8,14 @@ description: Fetch XPUOJ ordinary or contest problems, submit authorized exact s
 Use the bundled MCP tools. They use the existing local XPUOJ browser sign-in directly; no browser
 extension, page bridge, or connection step is required.
 
+## CLI availability
+
+The MCP server starts through `npx`, so a global `xpuoj` command may not exist. Before a workflow
+needs that command, run `bash scripts/ensure-xpuoj-cli.sh` from this skill directory. It checks for
+`xpuoj`, installs `@tensorplay/xpuoj@latest` globally only when missing, and verifies the result.
+Do not reinstall it when the command already exists. `xpuoj update` checks for a newer release; it
+does not reinstall the CLI.
+
 ## Authentication
 
 1. Call `xpuoj_connection_status`. It validates the current XPUOJ sign-in from Firefox, Chrome,

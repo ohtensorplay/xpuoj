@@ -63,7 +63,7 @@ jobs:
           if npm view "@tensorplay/xpuoj@$package_version" version >/dev/null 2>&1; then
             echo "@tensorplay/xpuoj@$package_version is already published"
           else
-            npm publish "$package_archive" --access public --ignore-scripts
+            npm publish "./$package_archive" --access public --ignore-scripts
           fi
 
       - name: Publish GitHub Package

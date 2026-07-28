@@ -25,7 +25,7 @@ import {
 } from "./core.js";
 import { runLocalMcp } from "./mcp.js";
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const cliOptions = {
   help: { type: "boolean", short: "h" },

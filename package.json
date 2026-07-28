@@ -1,6 +1,6 @@
 {
   "name": "@tensorplay/xpuoj",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Local direct XPUOJ MCP client",
   "repository": {
     "type": "git",

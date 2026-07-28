@@ -78,7 +78,7 @@ jobs:
             const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
             manifest.name = packageName;
             delete manifest.publishConfig;
-            writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\\n`);
+            writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}${String.fromCharCode(10)}`);
           ' "$staging_directory/package/package.json" "$github_package"
           npm publish "$staging_directory/package" --registry="$registry"
 

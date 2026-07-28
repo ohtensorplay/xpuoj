@@ -1,0 +1,29 @@
+name: Sync MCP to MEGA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    name: Sync MCP distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Sync MCP distribution
+        uses: ohtensorplay/hub-sync@v1
+        with:
+          mega_repo_id: mega/xpuoj
+          mega_oidc_resource: mega
+          repo_type: mcp
+          include: |
+            README.md
+            .agents/plugins/marketplace.json
+            plugins/xpuoj/**

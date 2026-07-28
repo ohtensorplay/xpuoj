@@ -43,23 +43,25 @@ jobs:
         run: npm publish --workspace @tensorplay/xpuoj --access public
 
   sync-mega:
-    name: Sync plugin to MEGA
+    name: Sync MCP to MEGA
     needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out release
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Sync plugin distribution
+      - name: Sync MCP distribution
         uses: ohtensorplay/hub-sync@v1
         with:
           mega_repo_id: mega/xpuoj
-          mega_token: ${{ secrets.MEGA_TOKEN }}
-          repo_type: space
+          mega_oidc_resource: mega
+          repo_type: mcp
           include: |
+            README.md
             .agents/plugins/marketplace.json
             plugins/xpuoj/**

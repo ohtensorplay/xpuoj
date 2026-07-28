@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -49,6 +50,37 @@ jobs:
           else
             npm publish --access public
           fi
+
+      - name: Publish GitHub Package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          package_suffix="$(node -p "require('./package.json').name.split('/').at(-1)")"
+          package_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          github_package="@${package_owner}/${package_suffix}"
+          registry="https://npm.pkg.github.com"
+          npm config set "//npm.pkg.github.com/:_authToken" "$NODE_AUTH_TOKEN"
+          if npm view "${github_package}@${package_version}" version --registry="$registry" >/dev/null 2>&1; then
+            echo "${github_package}@${package_version} is already published"
+            exit 0
+          fi
+          staging_directory="$(mktemp -d)"
+          npm pack --pack-destination "$staging_directory" >/dev/null
+          archive="$(find "$staging_directory" -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$archive"
+          tar -xzf "$archive" -C "$staging_directory"
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const [manifestPath, packageName] = process.argv.slice(1);
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+            manifest.name = packageName;
+            delete manifest.publishConfig;
+            writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\\n`);
+          ' "$staging_directory/package/package.json" "$github_package"
+          npm publish "$staging_directory/package" --registry="$registry"
 
       - name: Create GitHub Release
         env:

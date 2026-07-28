@@ -465,7 +465,7 @@ export class LocalMcpBridge {
             },
             serverInfo: {
               name: "xpuoj-local-browser-bridge",
-              version: "0.2.1"
+              version: "0.2.2"
             },
             instructions:
               "Use xpuoj_open_page for the requested XPUOJ URL. In the page, press Ctrl+B and Connect to the local relay. No browser extension is required."

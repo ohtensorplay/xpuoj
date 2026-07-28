@@ -1,6 +1,6 @@
 {
   "name": "@tensorplay/xpuoj",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local MCP bridge for the Agent Relay built into XPUOJ",
   "repository": {
     "type": "git",

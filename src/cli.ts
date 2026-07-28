@@ -3,7 +3,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
-import { DEFAULT_SITE_URL } from "./browser.js";
+import { resolveToken } from "./browser-auth.js";
 import {
   describeTarget,
   discoverApiBase,
@@ -25,7 +25,7 @@ import {
 } from "./core.js";
 import { runLocalMcp } from "./mcp.js";
 
-const VERSION = "0.2.2";
+const VERSION = "0.3.0";
 
 const cliOptions = {
   help: { type: "boolean", short: "h" },
@@ -50,9 +50,6 @@ const cliOptions = {
   top: { type: "string" },
   json: { type: "boolean" },
   "full-json": { type: "boolean" },
-  "relay-port": { type: "string" },
-  "connect-timeout": { type: "string" },
-  "no-open": { type: "boolean" }
 } as const;
 
 type ParsedValues = ReturnType<typeof parseCli>["values"];
@@ -70,7 +67,7 @@ function help(): string {
   return `xpuoj ${VERSION}
 
 Usage:
-  xpuoj mcp [--relay-port 7423] [--no-open]
+  xpuoj mcp
   xpuoj problem <URL|DISPLAY_ID> [--summary|--output FILE]
   xpuoj problem --contest-id ID --problem-order ORDER [--summary]
   xpuoj rank <CONTEST_URL|ID> [--top N|--json]
@@ -83,10 +80,9 @@ Target alternatives:
   --contest-id ID --problem-order ORDER
 
 Authentication:
-  The MCP bridge uses the Agent Relay built into the official XPUOJ website.
-  In any browser, press Ctrl+B and connect to http://127.0.0.1:7423.
-  No browser extension or cloud service is used. Direct API commands require
-  XPUOJ_TOKEN in the environment; the MCP bridge never needs that variable.
+  XPUOJ reads the active local sign-in from Firefox, Chrome, Chromium, Edge,
+  Brave, or Safari and calls the official API directly. No browser extension,
+  page bridge, or Connect step is required. XPUOJ_TOKEN is optional.
 `;
 }
 
@@ -127,13 +123,7 @@ function targetFromCli(
 async function createClient(values: ParsedValues): Promise<{
   client: XpuojClient;
 }> {
-  const token = process.env.XPUOJ_TOKEN?.trim();
-  if (!token) {
-    throw new XpuojError(
-      "AUTH_REQUIRED",
-      "Direct API commands require XPUOJ_TOKEN. For browser-based use, run `xpuoj mcp`."
-    );
-  }
+  const { token } = await resolveToken();
   const timeoutMs = positiveNumber(
     values["http-timeout"],
     30,
@@ -414,25 +404,8 @@ async function commandWait(
   return summary.status === "Accepted" ? 0 : 1;
 }
 
-async function commandMcp(values: ParsedValues): Promise<number> {
-  const relayPort = integerOption(values["relay-port"], "relay port") ?? 7423;
-  if (relayPort > 65_535) {
-    throw new XpuojError(
-      "INVALID_ARGUMENT",
-      "relay port cannot exceed 65535"
-    );
-  }
-  await runLocalMcp({
-    siteUrl: values.site ?? DEFAULT_SITE_URL,
-    relayPort,
-    connectTimeoutMs:
-      positiveNumber(
-        values["connect-timeout"],
-        45,
-        "browser connection timeout"
-      ) * 1_000,
-    openBrowser: values["no-open"] !== true
-  });
+async function commandMcp(): Promise<number> {
+  await runLocalMcp();
   return 0;
 }
 
@@ -460,7 +433,7 @@ async function main(): Promise<number> {
     case "wait":
       return commandWait(parsed.values, positional);
     case "mcp":
-      return commandMcp(parsed.values);
+      return commandMcp();
     default:
       throw new XpuojError("INVALID_ARGUMENT", `unknown command: ${command}`);
   }

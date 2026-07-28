@@ -1,17 +1,30 @@
 import { createInterface } from "node:readline";
 
+import { resolveToken, type ResolvedToken } from "./browser-auth.js";
 import {
-  DEFAULT_SITE_URL,
-  launchBrowser,
-  normalizeSiteUrl,
-  normalizeXpuojPage
-} from "./browser.js";
-import {
-  BrowserRelay,
-  BrowserRpcError,
-  type JsonRpcId,
-  type JsonRpcRequest
-} from "./relay.js";
+  discoverApiBase,
+  isRecord,
+  resolveContestId,
+  resolveProblemTarget,
+  safeError,
+  sha256Hex,
+  summarizeSubmission,
+  summarizeContestRanking,
+  XpuojClient,
+  XpuojError,
+  type JsonObject,
+  type ProblemTarget,
+  type SubmissionContent
+} from "./core.js";
+
+type JsonRpcId = string | number | null;
+
+interface JsonRpcRequest {
+  jsonrpc: "2.0";
+  id?: JsonRpcId;
+  method?: string;
+  params?: unknown;
+}
 
 interface McpTool {
   name: string;
@@ -20,250 +33,99 @@ interface McpTool {
   annotations?: Record<string, boolean>;
 }
 
-interface LocalMcpOptions {
-  siteUrl?: string;
-  relayPort?: number;
-  connectTimeoutMs?: number;
-  requestTimeoutMs?: number;
-  openBrowser?: boolean;
-  launch?: (url: string) => Promise<boolean>;
+interface DirectClient {
+  getProblem(target: ProblemTarget, locale?: string): Promise<JsonObject>;
+  getSubmissionDetail(submissionId: number, locale?: string): Promise<JsonObject>;
+  submitSolution(
+    target: ProblemTarget,
+    content: SubmissionContent,
+    locale?: string
+  ): Promise<{ submissionId: number; target: ProblemTarget }>;
+  getContestScoreboard(
+    contestId: number,
+    takeCount?: number,
+    skipCount?: number
+  ): Promise<JsonObject>;
+  getContestScoreboardMe(contestId: number): Promise<JsonObject>;
 }
 
-interface LocalMcpBridgeOptions extends LocalMcpOptions {
-  relay: BrowserRelay;
+export interface DirectMcpBridgeOptions {
   send: (message: unknown) => void;
+  createClient?: () => Promise<{ client: DirectClient; auth: ResolvedToken }>;
 }
 
-const EMPTY_OBJECT_SCHEMA = {
-  type: "object",
-  properties: {}
-};
+const EMPTY_OBJECT_SCHEMA = { type: "object", properties: {} };
 
-export const BROWSER_TOOLS: readonly McpTool[] = [
+const DIRECT_TOOLS: readonly McpTool[] = [
   {
-    name: "oj_status",
+    name: "xpuoj_connection_status",
     description:
-      "Report the current XPUOJ page, contest, problem, and current-user score status.",
-    inputSchema: EMPTY_OBJECT_SCHEMA
+      "Verify the current local Firefox, Chrome, Chromium, Edge, Brave, or Safari XPUOJ sign-in without opening a browser page.",
+    inputSchema: EMPTY_OBJECT_SCHEMA,
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }
   },
   {
-    name: "get_problem_description",
+    name: "xpuoj_get_problem",
     description:
-      "Get the currently opened problem statement as readable Markdown, including visible samples, limits, and language metadata.",
-    inputSchema: EMPTY_OBJECT_SCHEMA
-  },
-  {
-    name: "list_current_problem_languages",
-    description:
-      "List the submission language IDs available for the opened problem.",
-    inputSchema: EMPTY_OBJECT_SCHEMA
-  },
-  {
-    name: "search_problems",
-    description:
-      "Search ordinary XPUOJ problems. IDs are strings such as \"1001\" or \"P1234\".",
+      "Fetch a complete XPUOJ ordinary or contest problem directly with the local browser sign-in. No browser tab navigation is required.",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Search keyword or problem ID text."
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results, 1-50. Defaults to 10."
-        }
-      },
-      required: ["query"]
-    }
-  },
-  {
-    name: "list_problems",
-    description:
-      "List ordinary XPUOJ problems visible in the problem set.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        page: {
-          type: "number",
-          description: "1-based page number. Defaults to 1."
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results, 1-50. Defaults to 20."
-        },
-        keyword: {
-          type: "string",
-          description: "Optional title or ID keyword."
-        }
+        target: { type: "string", description: "An XPUOJ URL or ordinary display ID." },
+        problemId: { type: "number", description: "Ordinary problem display ID." },
+        contestId: { type: "number" },
+        problemOrder: { type: "number" },
+        locale: { type: "string", description: "Defaults to zh_CN." }
       }
-    }
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }
   },
   {
-    name: "switch_problem",
-    description:
-      "Switch the web page to an ordinary problem by an ID returned from search_problems or list_problems.",
+    name: "xpuoj_get_ranking",
+    description: "Fetch a contest leaderboard and the signed-in user's rank directly.",
     inputSchema: {
       type: "object",
       properties: {
-        id: {
-          type: "string",
-          description: "Problem ID string, for example \"1001\" or \"P1234\"."
-        }
-      },
-      required: ["id"]
-    }
-  },
-  {
-    name: "list_contest_problems",
-    description:
-      "List problems in the contest currently open in the browser.",
-    inputSchema: EMPTY_OBJECT_SCHEMA
-  },
-  {
-    name: "switch_contest_problem",
-    description:
-      "Switch to a problem in the currently open contest by problem order.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        problemOrder: {
-          type: "number",
-          description: "Positive contest problem number."
-        }
-      },
-      required: ["problemOrder"]
-    }
-  },
-  {
-    name: "get_current_editor_code",
-    description:
-      "Get code currently typed in the browser editor, optionally sliced by 1-based lines.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        withLineNumbers: { type: "boolean" },
-        startLine: { type: "number" },
-        lineCount: { type: "number" }
+        target: { type: "string", description: "A contest URL or contest ID." },
+        contestId: { type: "number" },
+        takeCount: { type: "number", minimum: 1, maximum: 50 }
       }
-    }
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }
   },
   {
-    name: "set_current_editor_language",
-    description:
-      "Switch the browser submission editor to an available language.",
+    name: "xpuoj_get_submission",
+    description: "Fetch the official status, score, diagnostics, and optional full detail for a visible submission.",
     inputSchema: {
       type: "object",
       properties: {
-        language: {
-          type: "string",
-          description: "Language ID from list_current_problem_languages."
-        }
-      },
-      required: ["language"]
-    }
-  },
-  {
-    name: "set_current_editor_code",
-    description:
-      "Replace the code currently typed in the browser submission editor.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        code: {
-          type: "string",
-          description: "Exact source code to put into the editor."
-        }
-      },
-      required: ["code"]
-    }
-  },
-  {
-    name: "apply_current_editor_code_patch",
-    description:
-      "Apply a unified diff to the code visible in the browser submission editor.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        patch: {
-          type: "string",
-          description: "Unified diff text for the current editor code."
-        }
-      },
-      required: ["patch"]
-    }
-  },
-  {
-    name: "list_my_submissions",
-    description:
-      "List the current user's recent submissions for the opened problem.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        codeLanguage: { type: "string" },
-        takeCount: {
-          type: "number",
-          description: "Maximum submissions to return. Defaults to 10."
-        }
-      }
-    }
-  },
-  {
-    name: "get_submission_overview",
-    description:
-      "Get verdict, score, language, time, and memory for a visible submission.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        submissionId: { type: "string" }
+        submissionId: { type: "number" },
+        locale: { type: "string" },
+        full: { type: "boolean", description: "Return full response instead of a safe summary." }
       },
       required: ["submissionId"]
-    }
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }
   },
   {
-    name: "get_submission_detail",
+    name: "xpuoj_submit_solution",
     description:
-      "Get source, overall judge details, a sample, or a testcase for a visible submission.",
+      "Submit exact source directly to XPUOJ. This is a non-idempotent external write and requires its SHA-256 plus explicit confirmation.",
     inputSchema: {
       type: "object",
       properties: {
-        submissionId: { type: "string" },
-        section: {
-          type: "string",
-          enum: ["overall", "code", "sample", "testcase"]
-        },
-        sampleIndex: { type: "number" },
-        subtaskIndex: { type: "number" },
-        testcaseIndex: { type: "number" },
-        include: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: [
-              "input",
-              "output",
-              "userOutput",
-              "userError",
-              "checkerMessage",
-              "interactorMessage",
-              "systemMessage",
-              "all"
-            ]
-          }
-        }
+        target: { type: "string" },
+        problemId: { type: "number" },
+        contestId: { type: "number" },
+        problemOrder: { type: "number" },
+        code: { type: "string" },
+        language: { type: "string" },
+        expectedSha256: { type: "string" },
+        confirmExternalWrite: { type: "boolean" },
+        locale: { type: "string" },
+        compileAndRunOptions: { type: "object" }
       },
-      required: ["submissionId", "section"]
-    }
-  },
-  {
-    name: "submit_code",
-    description:
-      "Submit the language and exact source already visible in the browser editor. XPUOJ applies the user's configured confirmation mode.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        skipSamples: { type: "boolean" }
-      }
+      required: ["code", "language", "expectedSha256", "confirmExternalWrite"]
     },
     annotations: {
       readOnlyHint: false,
@@ -274,137 +136,61 @@ export const BROWSER_TOOLS: readonly McpTool[] = [
   }
 ];
 
-const LOCAL_TOOLS: readonly McpTool[] = [
-  {
-    name: "xpuoj_open_page",
-    description:
-      "Open an XPUOJ URL in the default browser. After a new page loads, press Ctrl+B and Connect if the relay is not already connected. In Chrome or Edge, allow Local network access when prompted.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        url: {
-          type: "string",
-          description:
-            "An absolute XPUOJ URL or a site-relative path such as /p/1001."
-        }
-      }
-    },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true
-    }
-  },
-  {
-    name: "xpuoj_connection_status",
-    description:
-      "Check whether the local plugin is connected to an XPUOJ browser tab.",
-    inputSchema: EMPTY_OBJECT_SCHEMA,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    }
-  }
-];
-
-const ALL_TOOLS = [...LOCAL_TOOLS, ...BROWSER_TOOLS];
-const BROWSER_TOOL_NAMES = new Set(BROWSER_TOOLS.map(({ name }) => name));
-
-function isAddressInUse(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "EADDRINUSE"
-  );
-}
-
-async function createListeningRelay(
-  siteUrl: URL,
-  options: LocalMcpOptions
-): Promise<BrowserRelay> {
-  const relayOptions = {
-    allowedOrigin: siteUrl.origin,
-    port: options.relayPort ?? 7423,
-    requestTimeoutMs: options.requestTimeoutMs
-  };
-  let relay = new BrowserRelay(relayOptions);
-  try {
-    await relay.listen();
-    return relay;
-  } catch (error) {
-    if (!isAddressInUse(error)) {
-      throw error;
-    }
-  }
-
-  relay = new BrowserRelay({
-    ...relayOptions,
-    port: 0
-  });
-  await relay.listen();
-  process.stderr.write(
-    `XPUOJ relay port ${relayOptions.port} is already in use; using ${relay.baseUrl} instead.\n`
-  );
-  return relay;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function textToolResult(text: string, isError = false): unknown {
+  return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) };
 }
 
 function rpcResult(id: JsonRpcId, result: unknown): unknown {
-  return {
-    jsonrpc: "2.0",
-    id,
-    result
-  };
+  return { jsonrpc: "2.0", id, result };
 }
 
-function rpcError(
-  id: JsonRpcId,
-  code: number,
-  message: string,
-  data?: unknown
-): unknown {
-  return {
-    jsonrpc: "2.0",
-    id,
-    error: {
-      code,
-      message,
-      ...(data === undefined ? {} : { data })
-    }
-  };
+function rpcError(id: JsonRpcId, code: number, message: string): unknown {
+  return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-function textToolResult(text: string, isError = false): unknown {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {})
-  };
+function asId(value: unknown): JsonRpcId | undefined {
+  return typeof value === "string" || typeof value === "number" || value === null
+    ? value
+    : undefined;
 }
 
-export class LocalMcpBridge {
-  private readonly relay: BrowserRelay;
+function positiveInteger(value: unknown, label: string): number {
+  const parsed = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new XpuojError("INVALID_ARGUMENT", `${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function stringArgument(args: JsonObject, name: string): string | undefined {
+  const value = args[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function objectArgument(args: JsonObject, name: string): JsonObject {
+  const value = args[name];
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new XpuojError("INVALID_ARGUMENT", `${name} must be an object`);
+  }
+  return value;
+}
+
+async function defaultClient(): Promise<{ client: DirectClient; auth: ResolvedToken }> {
+  const auth = await resolveToken();
+  const apiBase = await discoverApiBase();
+  return { client: new XpuojClient({ apiBase, token: auth.token }), auth };
+}
+
+export class DirectMcpBridge {
   private readonly send: (message: unknown) => void;
-  private readonly siteUrl: URL;
-  private readonly connectTimeoutMs: number;
-  private readonly requestTimeoutMs: number;
-  private readonly shouldOpenBrowser: boolean;
-  private readonly launch: (url: string) => Promise<boolean>;
-  private connectionPromptActive = false;
+  private readonly createClient: () => Promise<{ client: DirectClient; auth: ResolvedToken }>;
 
-  constructor(options: LocalMcpBridgeOptions) {
-    this.relay = options.relay;
+  constructor(options: DirectMcpBridgeOptions) {
     this.send = options.send;
-    this.siteUrl = normalizeSiteUrl(options.siteUrl ?? DEFAULT_SITE_URL);
-    this.connectTimeoutMs = options.connectTimeoutMs ?? 45_000;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
-    this.shouldOpenBrowser = options.openBrowser !== false;
-    this.launch = options.launch ?? launchBrowser;
+    this.createClient = options.createClient ?? defaultClient;
   }
 
   async handle(message: unknown): Promise<void> {
@@ -413,99 +199,50 @@ export class LocalMcpBridge {
       return;
     }
     const hasId = Object.prototype.hasOwnProperty.call(message, "id");
-    const id = hasId ? this.asId(message.id) : undefined;
-    if (hasId && id === undefined) {
+    const id = hasId ? asId(message.id) : undefined;
+    if (typeof message.method !== "string") {
       this.send(rpcError(null, -32600, "Invalid Request"));
       return;
     }
-    if (typeof message.method !== "string") {
-      if (hasId) {
-        this.send(rpcError(id ?? null, -32600, "Invalid Request"));
-      }
-      return;
-    }
-
     if (!hasId) {
       return;
     }
-
-    const request: JsonRpcRequest = {
-      jsonrpc: "2.0",
-      id,
-      method: message.method,
-      ...(message.params === undefined ? {} : { params: message.params })
-    };
-    const response = await this.dispatch(request);
-    this.send(response);
-  }
-
-  private asId(value: unknown): JsonRpcId | undefined {
-    return typeof value === "string" ||
-      typeof value === "number" ||
-      value === null
-      ? value
-      : undefined;
-  }
-
-  private async dispatch(request: JsonRpcRequest): Promise<unknown> {
-    const id = request.id ?? null;
+    if (id === undefined) {
+      this.send(rpcError(null, -32600, "Invalid Request"));
+      return;
+    }
     try {
-      switch (request.method) {
+      switch (message.method) {
         case "initialize": {
-          const params = isRecord(request.params) ? request.params : {};
+          const params = isRecord(message.params) ? message.params : {};
           const protocolVersion =
-            typeof params.protocolVersion === "string"
-              ? params.protocolVersion
-              : "2024-11-05";
-          return rpcResult(id, {
-            protocolVersion,
-            capabilities: {
-              resources: {},
-              tools: {}
-            },
-            serverInfo: {
-              name: "xpuoj-local-browser-bridge",
-              version: "0.2.2"
-            },
-            instructions:
-              "Use xpuoj_open_page for the requested XPUOJ URL. In the page, press Ctrl+B and Connect to the local relay. No browser extension is required."
-          });
+            typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
+          this.send(
+            rpcResult(id, {
+              protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "xpuoj-local-api", version: "0.3.0" },
+              instructions:
+                "XPUOJ reads the active local browser sign-in and calls the official API directly. No browser extension, page bridge, or Connect action is required."
+            })
+          );
+          return;
         }
         case "ping":
-          return rpcResult(id, {});
+          this.send(rpcResult(id, {}));
+          return;
         case "tools/list":
-          return rpcResult(id, { tools: ALL_TOOLS });
-        case "resources/list":
-          return rpcResult(id, {
-            resources: [
-              {
-                uri: "problem://current",
-                name: "Current problem",
-                description:
-                  "The problem currently open in the connected XPUOJ tab.",
-                mimeType: "application/json"
-              }
-            ]
-          });
-        case "resources/read":
-          return rpcResult(
-            id,
-            await this.callBrowser("resources/read", request.params)
-          );
+          this.send(rpcResult(id, { tools: DIRECT_TOOLS }));
+          return;
         case "tools/call":
-          return rpcResult(id, await this.callTool(request.params));
+          this.send(rpcResult(id, await this.callTool(message.params)));
+          return;
         default:
-          return rpcError(id, -32601, `Method not found: ${request.method}`);
+          this.send(rpcError(id, -32601, `Method not found: ${message.method}`));
       }
     } catch (error) {
-      if (error instanceof BrowserRpcError) {
-        return rpcError(id, error.code, error.message, error.data);
-      }
-      return rpcError(
-        id,
-        -32603,
-        error instanceof Error ? error.message : "Internal error"
-      );
+      const safe = safeError(error);
+      this.send(rpcResult(id, textToolResult(`${safe.code}: ${safe.message}`, true)));
     }
   }
 
@@ -515,112 +252,116 @@ export class LocalMcpBridge {
     }
     const args = isRecord(params.arguments) ? params.arguments : {};
     if (params.name === "xpuoj_connection_status") {
+      const { client, auth } = await this.createClient();
+      await client.getProblem({ kind: "ordinary", displayId: 1 });
+      return textToolResult(JSON.stringify({ connected: true, source: auth.source }, undefined, 2));
+    }
+    if (params.name === "xpuoj_get_problem") {
+      const { client } = await this.createClient();
+      const target = resolveProblemTarget({
+        target: stringArgument(args, "target"),
+        problemId: args.problemId as number | undefined,
+        contestId: args.contestId as number | undefined,
+        problemOrder: args.problemOrder as number | undefined
+      });
+      const problem = await client.getProblem(target, stringArgument(args, "locale"));
+      return textToolResult(JSON.stringify(problem, undefined, 2));
+    }
+    if (params.name === "xpuoj_get_ranking") {
+      const { client } = await this.createClient();
+      const contestId = resolveContestId({
+        target: stringArgument(args, "target"),
+        contestId: args.contestId as number | undefined
+      });
+      const takeCount = args.takeCount === undefined ? 10 : positiveInteger(args.takeCount, "takeCount");
+      const [leaderboard, mine] = await Promise.allSettled([
+        client.getContestScoreboard(contestId, takeCount),
+        client.getContestScoreboardMe(contestId)
+      ]);
+      if (leaderboard.status === "rejected" && mine.status === "rejected") {
+        throw mine.reason;
+      }
+      const ranking = summarizeContestRanking(
+        contestId,
+        leaderboard.status === "fulfilled" ? leaderboard.value : null,
+        mine.status === "fulfilled" ? mine.value : null
+      );
+      return textToolResult(JSON.stringify(ranking, undefined, 2));
+    }
+    if (params.name === "xpuoj_get_submission") {
+      const { client } = await this.createClient();
+      const detail = await client.getSubmissionDetail(
+        positiveInteger(args.submissionId, "submissionId"),
+        stringArgument(args, "locale")
+      );
+      return textToolResult(
+        JSON.stringify(args.full === true ? detail : summarizeSubmission(detail), undefined, 2)
+      );
+    }
+    if (params.name === "xpuoj_submit_solution") {
+      if (args.confirmExternalWrite !== true) {
+        return textToolResult("Submission requires confirmExternalWrite=true.", true);
+      }
+      const code = stringArgument(args, "code");
+      const expectedSha256 = stringArgument(args, "expectedSha256");
+      const language = stringArgument(args, "language");
+      if (!code || !expectedSha256 || !language) {
+        return textToolResult("code, language, and expectedSha256 are required.", true);
+      }
+      const actualSha256 = await sha256Hex(code);
+      if (actualSha256 !== expectedSha256) {
+        return textToolResult("SOURCE_HASH_MISMATCH: code does not match expectedSha256.", true);
+      }
+      const { client } = await this.createClient();
+      const target = resolveProblemTarget({
+        target: stringArgument(args, "target"),
+        problemId: args.problemId as number | undefined,
+        contestId: args.contestId as number | undefined,
+        problemOrder: args.problemOrder as number | undefined
+      });
+      const result = await client.submitSolution(
+        target,
+        {
+          code,
+          language,
+          compileAndRunOptions: objectArgument(args, "compileAndRunOptions")
+        },
+        stringArgument(args, "locale")
+      );
       return textToolResult(
         JSON.stringify(
-          {
-            connected: this.relay.isConnected,
-            relayUrl: this.relay.baseUrl,
-            next: this.relay.isConnected
-              ? "The XPUOJ browser tab is ready."
-              : "Open XPUOJ, press Ctrl+B, keep the relay URL shown here, leave pairing token empty, and click Connect. In Chrome or Edge, allow Local network access when prompted."
-          },
+          { submissionId: result.submissionId, target: result.target, sha256: actualSha256 },
           undefined,
           2
         )
       );
     }
-    if (params.name === "xpuoj_open_page") {
-      const rawUrl =
-        typeof args.url === "string" ? args.url : this.siteUrl.toString();
-      const page = normalizeXpuojPage(rawUrl, this.siteUrl);
-      const opened = await this.launch(page.toString());
-      this.connectionPromptActive = true;
-      return textToolResult(
-        opened
-          ? `Opened ${page.toString()}. Press Ctrl+B in that tab and click Connect. In Chrome or Edge, allow Local network access when prompted. Relay URL: ${this.relay.baseUrl}`
-          : `Open ${page.toString()} manually, press Ctrl+B, and click Connect. In Chrome or Edge, allow Local network access when prompted. Relay URL: ${this.relay.baseUrl}`,
-        false
-      );
-    }
-    if (!BROWSER_TOOL_NAMES.has(params.name)) {
-      return textToolResult(`Unknown XPUOJ tool: ${params.name}`, true);
-    }
-    return this.callBrowser("tools/call", {
-      name: params.name,
-      arguments: args
-    });
-  }
-
-  private async callBrowser(method: string, params: unknown): Promise<unknown> {
-    if (!(await this.ensureBrowserConnection())) {
-      return textToolResult(
-        `XPUOJ browser relay is not connected. Open ${this.siteUrl.toString()}, press Ctrl+B, keep relay URL ${this.relay.baseUrl}, leave the pairing token empty, click Connect, and in Chrome or Edge allow Local network access when prompted, then retry.`,
-        true
-      );
-    }
-    this.connectionPromptActive = false;
-    return this.relay.request(method, params, this.requestTimeoutMs);
-  }
-
-  private async ensureBrowserConnection(): Promise<boolean> {
-    if (this.relay.isConnected) {
-      return true;
-    }
-    if (!this.connectionPromptActive) {
-      this.connectionPromptActive = true;
-      process.stderr.write(
-        `XPUOJ needs a browser connection. Press Ctrl+B in ${this.siteUrl.origin}, use ${this.relay.baseUrl}, leave the pairing token empty, and click Connect. In Chrome or Edge, allow Local network access when prompted.\n`
-      );
-      if (this.shouldOpenBrowser) {
-        await this.launch(this.siteUrl.toString());
-      }
-    }
-    return this.relay.waitForConnection(this.connectTimeoutMs);
+    return textToolResult(`Unknown XPUOJ tool: ${params.name}`, true);
   }
 }
 
-export async function runLocalMcp(
-  options: LocalMcpOptions = {}
-): Promise<void> {
-  const siteUrl = normalizeSiteUrl(options.siteUrl ?? DEFAULT_SITE_URL);
-  const relay = await createListeningRelay(siteUrl, options);
-
+export async function runLocalMcp(): Promise<void> {
   const pending = new Set<Promise<void>>();
-  const send = (message: unknown): void => {
-    process.stdout.write(`${JSON.stringify(message)}\n`);
-  };
-  const bridge = new LocalMcpBridge({
-    ...options,
-    relay,
-    send,
-    siteUrl: siteUrl.toString()
+  const bridge = new DirectMcpBridge({
+    send(message) {
+      process.stdout.write(`${JSON.stringify(message)}\n`);
+    }
   });
-  const lines = createInterface({
-    input: process.stdin,
-    crlfDelay: Infinity,
-    terminal: false
-  });
-
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
   lines.on("line", (line) => {
     if (!line.trim()) {
       return;
     }
-    let message: unknown;
+    let message: JsonRpcRequest;
     try {
-      message = JSON.parse(line);
+      message = JSON.parse(line) as JsonRpcRequest;
     } catch {
-      send(rpcError(null, -32700, "Parse error"));
+      process.stdout.write(`${JSON.stringify(rpcError(null, -32700, "Parse error"))}\n`);
       return;
     }
-    const task = bridge.handle(message).finally(() => {
-      pending.delete(task);
-    });
+    const task = bridge.handle(message).finally(() => pending.delete(task));
     pending.add(task);
   });
-
-  await new Promise<void>((resolve) => {
-    lines.once("close", resolve);
-  });
-  await relay.close();
+  await new Promise<void>((resolve) => lines.once("close", resolve));
   await Promise.allSettled(pending);
 }

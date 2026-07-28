@@ -150,7 +150,7 @@ export function normalizeApiBase(value: string): string {
 function targetFromUrl(value: string): ProblemTarget {
   let url: URL;
   try {
-    url = new URL(value);
+    url = new URL(value, DEFAULT_SITE);
   } catch (error) {
     throw new XpuojError(
       "INVALID_ARGUMENT",
@@ -361,7 +361,7 @@ function apiError(error: unknown): XpuojError {
   if (authCode) {
     return new XpuojError(
       "PERMISSION_DENIED",
-      "Your XPUOJ sign-in is no longer valid. Sign in again and reconnect."
+      "Your XPUOJ sign-in is no longer valid. Sign in again and retry."
     );
   }
   return new XpuojError(
@@ -435,7 +435,7 @@ export class XpuojClient {
     if (!options.token.trim()) {
       throw new XpuojError(
         "AUTH_REQUIRED",
-        "Direct API access requires XPUOJ_TOKEN. Browser-based plugin access uses `xpuoj mcp`."
+        "An active local XPUOJ browser sign-in or XPUOJ_TOKEN is required."
       );
     }
     this.apiBase = normalizeApiBase(options.apiBase);
@@ -473,7 +473,7 @@ export class XpuojClient {
       throw new XpuojError(
         response.status === 401 || response.status === 403 ? "PERMISSION_DENIED" : "HTTP_ERROR",
         response.status === 401 || response.status === 403
-          ? "Your XPUOJ sign-in is no longer valid. Sign in again and reconnect."
+          ? "Your XPUOJ sign-in is no longer valid. Sign in again and retry."
           : `XPUOJ could not complete the request (status ${response.status}).`,
         { status: response.status }
       );

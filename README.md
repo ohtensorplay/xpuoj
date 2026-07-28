@@ -1,7 +1,8 @@
 # XPUOJ plugin
 
-XPUOJ connects Codex to the Agent Relay built into the official XPUOJ website. It runs locally and
-does not require a browser extension.
+XPUOJ lets Codex fetch problems and submit authorized source through the official XPUOJ API. It
+runs locally and uses your existing XPUOJ browser sign-in; no browser extension or page connection
+is required.
 
 ## Install
 
@@ -10,19 +11,10 @@ codex plugin marketplace add ohtensorplay/xpuoj
 codex plugin add xpuoj --marketplace tensorplay-xpuoj
 ```
 
-The plugin starts `xpuoj mcp` locally. On first use:
-
-1. Open the requested page with the `xpuoj_open_page` tool.
-2. In XPUOJ, press <kbd>Ctrl</kbd>+<kbd>B</kbd>.
-3. Keep the relay URL at `http://127.0.0.1:7423`, leave the pairing token empty, and click
-   **Connect**.
-
-Your XPUOJ login remains in the browser. The same flow works in Chrome, Edge, Firefox, Safari, and
-other modern browsers. In Chrome or Edge, allow XPUOJ's **Local network access** permission when
-prompted.
-
-Submission remains controlled by XPUOJ's Agent Relay setting. Its default mode asks for
-confirmation in the browser before creating a submission.
+Sign in to XPUOJ in Firefox, Chrome, Chromium, Edge, Brave, or Safari, then call
+`xpuoj_connection_status`. The plugin reads the active local sign-in without displaying or storing
+credentials. Queries do not need a browser tab open. Submissions remain explicit external writes
+and require the exact source SHA-256 plus confirmation.
 
 ## npm package
 

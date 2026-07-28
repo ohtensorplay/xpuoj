@@ -1,7 +1,7 @@
 {
   "name": "xpuoj",
-  "version": "0.2.2",
-  "description": "Use XPUOJ locally through its browser-native Agent Relay.",
+  "version": "0.3.0",
+  "description": "Use XPUOJ locally through your existing browser sign-in.",
   "author": {
     "name": "TensorPlay"
   },
@@ -16,7 +16,7 @@
   "interface": {
     "displayName": "XPUOJ",
     "shortDescription": "Local XPUOJ browser and judge tools",
-    "longDescription": "Fetch problems, edit and submit exact source, and follow official judge results through the local Agent Relay built into XPUOJ.",
+    "longDescription": "Fetch problems, submit exact source, and follow official judge results through the official XPUOJ API and your local browser sign-in.",
     "developerName": "TensorPlay",
     "category": "Developer Tools",
     "capabilities": [

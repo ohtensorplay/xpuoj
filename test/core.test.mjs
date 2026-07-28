@@ -17,6 +17,10 @@ test("resolves ordinary and contest targets", () => {
     kind: "ordinary",
     displayId: 120
   });
+  assert.deepEqual(resolveProblemTarget({ target: "/p/1" }), {
+    kind: "ordinary",
+    displayId: 1
+  });
   assert.deepEqual(
     resolveProblemTarget({
       target: "https://xpuoj.com/contest/7/problem/3"

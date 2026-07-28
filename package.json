@@ -1,7 +1,7 @@
 {
   "name": "@tensorplay/xpuoj",
-  "version": "0.2.2",
-  "description": "Local MCP bridge for the Agent Relay built into XPUOJ",
+  "version": "0.3.0",
+  "description": "Local direct XPUOJ MCP client",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ohtensorplay/xpuoj.git"
@@ -32,12 +32,8 @@
     "pack:cli": "npm pack",
     "prepack": "npm run build"
   },
-  "dependencies": {
-    "ws": "^8.18.3"
-  },
   "devDependencies": {
     "@types/node": "^24.10.0",
-    "@types/ws": "^8.18.1",
     "typescript": "^6.0.3"
   },
   "engines": {

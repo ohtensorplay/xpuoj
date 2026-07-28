@@ -24,6 +24,7 @@ import {
   type SubmissionSummary
 } from "./core.js";
 import { runLocalMcp } from "./mcp.js";
+import { checkForUpdate } from "./update.js";
 
 const VERSION = "0.3.4";
 
@@ -68,6 +69,7 @@ function help(): string {
 
 Usage:
   xpuoj mcp
+  xpuoj update
   xpuoj problem <URL|DISPLAY_ID> [--summary|--output FILE]
   xpuoj problem --contest-id ID --problem-order ORDER [--summary]
   xpuoj rank <CONTEST_URL|ID> [--top N|--json]
@@ -83,6 +85,10 @@ Authentication:
   XPUOJ reads the active local sign-in from Firefox, Chrome, Chromium, Edge,
   Brave, or Safari and calls the official API directly. No browser extension,
   page bridge, or Connect step is required. XPUOJ_TOKEN is optional.
+
+Updates:
+  Regular CLI commands check the latest GitHub Release at most once per 12 hours.
+  Run \`xpuoj update\` to check immediately, or set XPUOJ_NO_UPDATE_CHECK=1 to disable it.
 `;
 }
 
@@ -409,6 +415,34 @@ async function commandMcp(): Promise<number> {
   return 0;
 }
 
+async function commandUpdate(): Promise<number> {
+  const update = await checkForUpdate(VERSION, { force: true });
+  if (!update.latestVersion) {
+    console.log("UPDATE=unavailable");
+    return 0;
+  }
+  if (!update.updateAvailable) {
+    console.log(`UPDATE=current VERSION=${VERSION}`);
+    return 0;
+  }
+  console.log(`UPDATE=available CURRENT=${VERSION} LATEST=${update.latestVersion}`);
+  console.log("RUN=npm install -g @tensorplay/xpuoj@latest");
+  return 0;
+}
+
+async function notifyAboutUpdate(): Promise<void> {
+  if (process.env.XPUOJ_NO_UPDATE_CHECK === "1") {
+    return;
+  }
+  const update = await checkForUpdate(VERSION);
+  if (update.updateAvailable && update.latestVersion) {
+    process.stderr.write(
+      `UPDATE_AVAILABLE current=${VERSION} latest=${update.latestVersion} ` +
+        "Run: npm install -g @tensorplay/xpuoj@latest\n"
+    );
+  }
+}
+
 async function main(): Promise<number> {
   const parsed = parseCli(process.argv.slice(2));
   if (parsed.values.version) {
@@ -421,22 +455,37 @@ async function main(): Promise<number> {
     return command === undefined && !parsed.values.help ? 2 : 0;
   }
   const positional = parsed.positionals[1];
+  const updateNotice = command === "mcp" || command === "update" ? undefined : notifyAboutUpdate();
+  let exitCode: number;
   switch (command) {
     case "problem":
-      return commandProblem(parsed.values, positional);
+      exitCode = await commandProblem(parsed.values, positional);
+      break;
     case "rank":
-      return commandRank(parsed.values, positional);
+      exitCode = await commandRank(parsed.values, positional);
+      break;
     case "submit":
-      return commandSubmit(parsed.values, positional);
+      exitCode = await commandSubmit(parsed.values, positional);
+      break;
     case "status":
-      return commandStatus(parsed.values, positional);
+      exitCode = await commandStatus(parsed.values, positional);
+      break;
     case "wait":
-      return commandWait(parsed.values, positional);
+      exitCode = await commandWait(parsed.values, positional);
+      break;
     case "mcp":
-      return commandMcp();
+      exitCode = await commandMcp();
+      break;
+    case "update":
+      exitCode = await commandUpdate();
+      break;
     default:
       throw new XpuojError("INVALID_ARGUMENT", `unknown command: ${command}`);
   }
+  if (updateNotice) {
+    await updateNotice;
+  }
+  return exitCode;
 }
 
 try {

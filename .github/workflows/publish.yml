@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -23,7 +24,8 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          package-manager-cache: false
+          cache: "npm"
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -40,23 +42,89 @@ jobs:
           package_version="$(node -p "require('./package.json').version")"
           test "$GITHUB_REF_NAME" = "v$package_version"
 
+      - name: Build release distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          mkdir -p release-dist
+          npm run build
+          npm pack --ignore-scripts --pack-destination release-dist >/dev/null
+          git archive --format=tar.gz --prefix="xpuoj-${package_version}/" "$GITHUB_REF_NAME" \
+            > "release-dist/xpuoj-${package_version}.tar.gz"
+
       - name: Publish
         shell: bash
         run: |
+          set -euo pipefail
           package_version="$(node -p "require('./package.json').version")"
+          package_archive="$(find release-dist -maxdepth 1 -name 'tensorplay-xpuoj-*.tgz' -print -quit)"
+          test -n "$package_archive"
           if npm view "@tensorplay/xpuoj@$package_version" version >/dev/null 2>&1; then
             echo "@tensorplay/xpuoj@$package_version is already published"
           else
-            npm publish --access public
+            npm publish "$package_archive" --access public --ignore-scripts
           fi
+
+      - name: Publish GitHub Package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          package_suffix="$(node -p "require('./package.json').name.split('/').at(-1)")"
+          package_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          github_package="@${package_owner}/${package_suffix}"
+          registry="https://npm.pkg.github.com"
+          npm config set "//npm.pkg.github.com/:_authToken" "$NODE_AUTH_TOKEN"
+          if npm view "${github_package}@${package_version}" version --registry="$registry" >/dev/null 2>&1; then
+            echo "${github_package}@${package_version} is already published"
+            exit 0
+          fi
+          package_archive="$(find release-dist -maxdepth 1 -name 'tensorplay-xpuoj-*.tgz' -print -quit)"
+          test -n "$package_archive"
+          package_directory="$(mktemp -d)"
+          tar -xzf "$package_archive" -C "$package_directory"
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const [manifestPath, packageName] = process.argv.slice(1);
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+            manifest.name = packageName;
+            delete manifest.publishConfig;
+            if (manifest.scripts) delete manifest.scripts.prepack;
+            writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}${String.fromCharCode(10)}`);
+          ' "$package_directory/package/package.json" "$github_package"
+          npm pack "$package_directory/package" --ignore-scripts --pack-destination "$package_directory" >/dev/null
+          github_archive="$(find "$package_directory" -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$github_archive"
+          npm publish "$github_archive" --registry="$registry" --ignore-scripts
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
+          release_files=(release-dist/*)
+          package_version="$(node -p "require('./package.json').version")"
+          release_notes=$(printf '%s\n' \
+            "## XPUOJ ${GITHUB_REF_NAME}" \
+            "" \
+            "- npm: \`@tensorplay/xpuoj@${package_version}\`" \
+            "- GitHub Packages: \`@ohtensorplay/xpuoj@${package_version}\`" \
+            "- Assets: a built CLI tarball and a source tarball." \
+            "- The CLI checks GitHub Releases for updates with a 12-hour local cache.")
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists"
+            existing_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+            for file in "${release_files[@]}"; do
+              asset_name="${file##*/}"
+              if ! grep -Fxq "$asset_name" <<< "$existing_assets"; then
+                gh release upload "$GITHUB_REF_NAME" "$file"
+              fi
+            done
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$release_notes"
           else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
+              --verify-tag --title "$GITHUB_REF_NAME" --notes "$release_notes" --generate-notes
           fi

@@ -1,4 +1,4 @@
-name: Sync MCP to MEGA
+name: Publish npm package
 
 on:
   release:
@@ -8,12 +8,9 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
-    name: Publish npm package
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Check out release
@@ -45,25 +42,3 @@ jobs:
 
       - name: Publish
         run: npm publish --workspace @tensorplay/xpuoj --access public
-
-  sync:
-    name: Sync MCP distribution
-    needs: publish
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.publish.result == 'success') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || 'main' }}
-
-      - name: Sync MCP distribution
-        uses: ohtensorplay/hub-sync@v1
-        with:
-          mega_repo_id: mega/xpuoj
-          mega_oidc_resource: mega
-          repo_type: mcp
-          include: |
-            README.md
-            .agents/plugins/marketplace.json
-            plugins/xpuoj/**

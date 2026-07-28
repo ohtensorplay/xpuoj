@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "xpuoj": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "@tensorplay/xpuoj",
+        "mcp"
+      ]
+    }
+  }
+}

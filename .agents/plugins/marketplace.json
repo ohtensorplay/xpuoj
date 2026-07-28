@@ -1,0 +1,20 @@
+{
+  "name": "tensorplay-xpuoj",
+  "interface": {
+    "displayName": "TensorPlay"
+  },
+  "plugins": [
+    {
+      "name": "xpuoj",
+      "source": {
+        "source": "local",
+        "path": "./plugins/xpuoj"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

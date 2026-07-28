@@ -1,0 +1,37 @@
+{
+  "name": "xpuoj",
+  "version": "0.2.0",
+  "description": "Use XPUOJ locally through its browser-native Agent Relay.",
+  "author": {
+    "name": "TensorPlay"
+  },
+  "keywords": [
+    "xpuoj",
+    "online-judge",
+    "mcp",
+    "judge",
+    "gpu-kernels"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "XPUOJ",
+    "shortDescription": "Local XPUOJ browser and judge tools",
+    "longDescription": "Fetch problems, edit and submit exact source, and follow official judge results through the local Agent Relay built into XPUOJ.",
+    "developerName": "TensorPlay",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Open this XPUOJ contest and show my current status.",
+      "Fetch this XPUOJ problem and explain its exact ABI.",
+      "Submit this source to XPUOJ and wait for the verdict."
+    ],
+    "composerIcon": "./assets/xpuoj-mark.svg",
+    "logo": "./assets/xpuoj-mark.svg",
+    "brandColor": "#F59E0B"
+  },
+  "mcpServers": "./.mcp.json"
+}

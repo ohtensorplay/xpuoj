@@ -1,0 +1,52 @@
+{
+  "name": "@tensorplay/xpuoj",
+  "version": "0.2.0",
+  "description": "Local MCP bridge for the Agent Relay built into XPUOJ",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ohtensorplay/xpuoj.git"
+  },
+  "homepage": "https://github.com/ohtensorplay/xpuoj#readme",
+  "bugs": {
+    "url": "https://github.com/ohtensorplay/xpuoj/issues"
+  },
+  "type": "module",
+  "bin": {
+    "xpuoj": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/core.js",
+    "./core": "./dist/core.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "xpuoj",
+    "online-judge",
+    "mcp",
+    "cli",
+    "gpu"
+  ]
+}

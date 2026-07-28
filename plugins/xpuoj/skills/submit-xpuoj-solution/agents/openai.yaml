@@ -1,0 +1,4 @@
+interface:
+  display_name: "XPUOJ Judge"
+  short_description: "Use XPUOJ locally through its browser Agent Relay"
+  default_prompt: "Use $submit-xpuoj-solution to fetch this XPUOJ task, submit the exact source, and wait for the official verdict."

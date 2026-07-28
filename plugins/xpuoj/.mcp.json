@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "--yes",
-        "@tensorplay/xpuoj@0.3.3",
+        "@tensorplay/xpuoj@0.3.4",
         "mcp"
       ]
     }

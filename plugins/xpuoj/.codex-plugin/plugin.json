@@ -1,6 +1,6 @@
 {
   "name": "xpuoj",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Use XPUOJ locally through your existing browser sign-in.",
   "author": {
     "name": "TensorPlay"

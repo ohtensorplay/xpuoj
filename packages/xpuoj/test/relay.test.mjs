@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import WebSocket from "ws";
 
@@ -74,6 +77,39 @@ const TOOL_ARGUMENTS = {
 
 function nextWebSocketJson(socket) {
   return once(socket, "message").then(([data]) => JSON.parse(data.toString()));
+}
+
+function nextJsonLine(stream) {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const cleanup = () => {
+      stream.off("data", onData);
+      stream.off("error", onError);
+      stream.off("end", onEnd);
+    };
+    const onData = (chunk) => {
+      buffer += chunk.toString();
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) return;
+      cleanup();
+      try {
+        resolve(JSON.parse(buffer.slice(0, newline)));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new Error("MCP stdout closed before a JSON response."));
+    };
+    stream.on("data", onData);
+    stream.once("error", onError);
+    stream.once("end", onEnd);
+  });
 }
 
 test("accepts Private Network Access preflights across browser families", async () => {
@@ -233,6 +269,56 @@ test("answers MCP initialization locally before a browser connects", async () =>
       true
     );
   });
+});
+
+test("starts and handshakes when the preferred relay port is occupied", async (t) => {
+  const blocker = createServer((_request, response) => response.end());
+  blocker.listen(0, "127.0.0.1");
+  await once(blocker, "listening");
+  const address = blocker.address();
+  assert.ok(address && typeof address !== "string");
+
+  const child = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../dist/cli.js", import.meta.url)),
+      "mcp",
+      "--relay-port",
+      String(address.port),
+      "--no-open"
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    await new Promise((resolve) => blocker.close(() => resolve()));
+  });
+
+  child.stdin.write(
+    `${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "startup-regression", version: "1.0.0" }
+      }
+    })}\n`
+  );
+  const response = await nextJsonLine(child.stdout);
+  assert.equal(response.id, 1);
+  assert.equal(response.result.serverInfo.name, "xpuoj-local-browser-bridge");
+
+  child.stdin.end();
+  const [code, signal] = await once(child, "exit");
+  assert.equal(signal, null);
+  assert.equal(code, 0);
+  assert.match(stderr, /relay port \d+ is already in use; using http:\/\/127\.0\.0\.1:\d+/);
 });
 
 test("bridges a browser tool call end to end", async () => {

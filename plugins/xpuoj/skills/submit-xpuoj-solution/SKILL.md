@@ -12,8 +12,9 @@ required.
 
 1. Call `xpuoj_open_page` with the exact ordinary or contest URL.
 2. Call `xpuoj_connection_status`. If disconnected, ask the user to press `Ctrl+B` in that XPUOJ
-   tab, keep the relay URL at `http://127.0.0.1:7423`, leave the pairing token empty, and click
-   **Connect**. In Chrome or Edge, the user must also allow XPUOJ's **Local network access**
+   tab, use the relay URL returned by `xpuoj_connection_status`, leave the pairing token empty, and
+   click **Connect**. The default is `http://127.0.0.1:7423`; if another XPUOJ process already uses
+   it, the plugin selects a free loopback port. In Chrome or Edge, the user must also allow XPUOJ's **Local network access**
    permission when prompted. Retry after the user connects.
 3. Call `oj_status` to confirm that the expected contest/problem is open. A relay connection is not
    proof that the page has access to the requested problem.

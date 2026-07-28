@@ -134,7 +134,6 @@ export class BrowserRelay {
         }
       });
     });
-    this.server = server;
     server.on("upgrade", (request, socket, head) => {
       this.handleUpgrade(request, socket, head);
     });
@@ -160,6 +159,7 @@ export class BrowserRelay {
     if (!address || typeof address === "string") {
       throw new Error("Could not determine the browser relay address.");
     }
+    this.server = server;
     this.listeningPort = address.port;
     return address.port;
   }

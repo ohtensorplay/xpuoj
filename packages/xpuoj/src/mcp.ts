@@ -313,6 +313,44 @@ const LOCAL_TOOLS: readonly McpTool[] = [
 const ALL_TOOLS = [...LOCAL_TOOLS, ...BROWSER_TOOLS];
 const BROWSER_TOOL_NAMES = new Set(BROWSER_TOOLS.map(({ name }) => name));
 
+function isAddressInUse(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EADDRINUSE"
+  );
+}
+
+async function createListeningRelay(
+  siteUrl: URL,
+  options: LocalMcpOptions
+): Promise<BrowserRelay> {
+  const relayOptions = {
+    allowedOrigin: siteUrl.origin,
+    port: options.relayPort ?? 7423,
+    requestTimeoutMs: options.requestTimeoutMs
+  };
+  let relay = new BrowserRelay(relayOptions);
+  try {
+    await relay.listen();
+    return relay;
+  } catch (error) {
+    if (!isAddressInUse(error)) {
+      throw error;
+    }
+  }
+
+  relay = new BrowserRelay({
+    ...relayOptions,
+    port: 0
+  });
+  await relay.listen();
+  process.stderr.write(
+    `XPUOJ relay port ${relayOptions.port} is already in use; using ${relay.baseUrl} instead.\n`
+  );
+  return relay;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -427,7 +465,7 @@ export class LocalMcpBridge {
             },
             serverInfo: {
               name: "xpuoj-local-browser-bridge",
-              version: "0.2.0"
+              version: "0.2.1"
             },
             instructions:
               "Use xpuoj_open_page for the requested XPUOJ URL. In the page, press Ctrl+B and Connect to the local relay. No browser extension is required."
@@ -545,12 +583,7 @@ export async function runLocalMcp(
   options: LocalMcpOptions = {}
 ): Promise<void> {
   const siteUrl = normalizeSiteUrl(options.siteUrl ?? DEFAULT_SITE_URL);
-  const relay = new BrowserRelay({
-    allowedOrigin: siteUrl.origin,
-    port: options.relayPort ?? 7423,
-    requestTimeoutMs: options.requestTimeoutMs
-  });
-  await relay.listen();
+  const relay = await createListeningRelay(siteUrl, options);
 
   const pending = new Set<Promise<void>>();
   const send = (message: unknown): void => {

@@ -1,23 +1,57 @@
 {
-  "name": "xpuoj-plugin-workspace",
+  "name": "@tensorplay/xpuoj",
   "version": "0.2.1",
-  "private": true,
+  "description": "Local MCP bridge for the Agent Relay built into XPUOJ",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ohtensorplay/xpuoj.git"
+  },
+  "homepage": "https://github.com/ohtensorplay/xpuoj#readme",
+  "bugs": {
+    "url": "https://github.com/ohtensorplay/xpuoj/issues"
+  },
   "type": "module",
-  "workspaces": [
-    "packages/xpuoj"
+  "bin": {
+    "xpuoj": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/core.js",
+    "./core": "./dist/core.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
   ],
   "scripts": {
-    "build": "npm run build --workspace @tensorplay/xpuoj",
-    "check": "npm run typecheck --workspace @tensorplay/xpuoj && npm run build --workspace @tensorplay/xpuoj && npm run check:public",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run build && npm run check:public",
     "check:public": "node scripts/check-public-surface.mjs",
-    "test": "npm run test --workspace @tensorplay/xpuoj",
-    "pack:cli": "npm pack --workspace @tensorplay/xpuoj"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "pack:cli": "npm pack",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=22.13.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "keywords": [
+    "xpuoj",
+    "online-judge",
+    "mcp",
+    "cli",
+    "gpu"
+  ]
 }

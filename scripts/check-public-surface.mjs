@@ -3,7 +3,6 @@ import { access, readFile } from "node:fs/promises";
 
 const publicFiles = [
   "README.md",
-  "packages/xpuoj/README.md",
   "plugins/xpuoj/.codex-plugin/plugin.json",
   "plugins/xpuoj/.mcp.json",
   "plugins/xpuoj/skills/submit-xpuoj-solution/SKILL.md"
@@ -31,7 +30,7 @@ surfaces.push({
   label: "xpuoj --help",
   text: execFileSync(
     process.execPath,
-    [new URL("../packages/xpuoj/dist/cli.js", import.meta.url).pathname, "--help"],
+    [new URL("../dist/cli.js", import.meta.url).pathname, "--help"],
     { encoding: "utf8" }
   )
 });

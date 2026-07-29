@@ -111,6 +111,66 @@ test("normalizes submission diagnostics", () => {
   assert.equal(summary.testcases[0]?.checkerMessage, "OK");
 });
 
+test("uses XPUOJ's token query parameter for session bootstrap", async () => {
+  let request;
+  const client = new XpuojClient({
+    apiBase: "https://example.invalid",
+    token: "session-token",
+    fetchFn: async (url, options) => {
+      request = { url: new URL(url), options };
+      return Response.json({ userMeta: { username: "me" } });
+    }
+  });
+
+  assert.equal(await client.getCurrentUsername(), "me");
+  assert.equal(request.url.searchParams.get("token"), "session-token");
+  assert.equal(request.options.headers.Authorization, "Bearer session-token");
+});
+
+test("keeps bearer authentication when a POST adds content headers", async () => {
+  let request;
+  const client = new XpuojClient({
+    apiBase: "https://example.invalid",
+    token: "session-token",
+    fetchFn: async (_url, options) => {
+      request = options;
+      return Response.json({ ok: true });
+    }
+  });
+
+  await client.post("submission/querySubmission", { takeCount: 1 });
+  assert.equal(request.headers.Authorization, "Bearer session-token");
+  assert.equal(request.headers["Content-Type"], "application/json");
+});
+
+test("merges every contest problem for a contest-wide submission scope", async () => {
+  const requests = [];
+  const client = new XpuojClient({
+    apiBase: "https://example.invalid",
+    token: "session-token",
+    fetchFn: async (url, options) => {
+      const endpoint = new URL(url).pathname;
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({ endpoint, payload });
+      if (endpoint.endsWith("/getSessionInfo")) {
+        return Response.json({ userMeta: { username: "me" } });
+      }
+      if (endpoint.endsWith("/getContestProblems")) {
+        return Response.json({ problems: [{ order: 1 }, { order: 2 }] });
+      }
+      return Response.json({
+        submissions: [{ id: payload.problemOrder === 1 ? 10 : 20, problem: { order: payload.problemOrder } }],
+        hasSmallerId: false
+      });
+    }
+  });
+
+  const listed = await client.listSubmissions({ kind: "contest-all", contestId: 7 }, { takeCount: 2 });
+  assert.deepEqual(listed.response.submissions.map((submission) => submission.id), [20, 10]);
+  assert.equal(listed.response.submissions[0].contestId, 7);
+  assert.equal(requests.filter(({ endpoint }) => endpoint.endsWith("/querySubmissions")).length, 2);
+});
+
 test("normalizes ranking without exposing private entry fields", () => {
   const summary = summarizeContestRanking(
     7,

@@ -39,6 +39,13 @@ export type ProblemTarget =
       problemOrder: number;
     };
 
+export type SubmissionScope =
+  | ProblemTarget
+  | {
+      kind: "contest-all";
+      contestId: number;
+    };
+
 export interface ProblemTargetInput {
   target?: string;
   problemId?: number;
@@ -98,6 +105,30 @@ export interface SubmissionSummary {
   testcases: SubmissionTestcaseSummary[];
 }
 
+export interface SubmissionRecord {
+  submissionId: unknown;
+  status: unknown;
+  score: unknown;
+  displayScore: unknown;
+  language: unknown;
+  submittedAt: unknown;
+  timeUsed: unknown;
+  memoryUsed: unknown;
+  problem: {
+    displayId: unknown;
+    contestId: unknown;
+    order: unknown;
+    title: unknown;
+  };
+}
+
+export interface SubmissionListSummary {
+  username: string;
+  hasOlder: boolean | null;
+  hasNewer: boolean | null;
+  submissions: SubmissionRecord[];
+}
+
 export interface SubmitResult {
   submissionId: number;
   target: ProblemTarget;
@@ -113,8 +144,7 @@ export type XpuojErrorCode =
   | "HTTP_ERROR"
   | "NETWORK_ERROR"
   | "NOT_SUBMITTABLE"
-  | "LANGUAGE_NOT_ALLOWED"
-  | "SOURCE_HASH_MISMATCH";
+  | "LANGUAGE_NOT_ALLOWED";
 
 export class XpuojError extends Error {
   readonly code: XpuojErrorCode;
@@ -447,18 +477,17 @@ export class XpuojClient {
       : (input, init) => fetch(input, init);
   }
 
-  async post(endpoint: string, payload: JsonObject): Promise<JsonObject> {
+  private async request(endpoint: string, init: RequestInit): Promise<JsonObject> {
     let response: Response;
     try {
       response = await this.fetchFn(`${this.apiBase}${endpoint}`, {
-        method: "POST",
+        ...init,
         headers: {
           Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-          "User-Agent": "xpuoj"
+          "User-Agent": "xpuoj",
+          ...(init.headers ?? {})
         },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.timeoutMs)
+        signal: init.signal ?? AbortSignal.timeout(this.timeoutMs)
       });
     } catch (error) {
       throw new XpuojError(
@@ -501,6 +530,33 @@ export class XpuojClient {
     return parsed;
   }
 
+  async post(endpoint: string, payload: JsonObject): Promise<JsonObject> {
+    return this.request(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async get(endpoint: string): Promise<JsonObject> {
+    return this.request(endpoint, { method: "GET" });
+  }
+
+  async getCurrentUsername(): Promise<string> {
+    // XPUOJ's session bootstrap endpoint reads the bearer token from the query
+    // string. Other API endpoints use the Authorization header, so retain that
+    // header while passing the bootstrap token in the form the browser uses.
+    const session = await this.get(
+      `auth/getSessionInfo?${new URLSearchParams({ token: this.token }).toString()}`
+    );
+    const userMeta = isRecord(session.userMeta) ? session.userMeta : {};
+    const username = typeof userMeta.username === "string" ? userMeta.username.trim() : "";
+    if (!username) {
+      throw new XpuojError("PERMISSION_DENIED", "XPUOJ did not return the signed-in username.");
+    }
+    return username;
+  }
+
   async getProblem(target: ProblemTarget, locale = "zh_CN"): Promise<JsonObject> {
     if (target.kind === "contest") {
       return this.post("contest/play/getProblem", contestProblemPayload(target, locale));
@@ -513,6 +569,98 @@ export class XpuojClient {
       submissionId: String(positiveInteger(submissionId, "submission ID")),
       locale
     });
+  }
+
+  async listSubmissions(
+    target: SubmissionScope | undefined,
+    options: {
+      locale?: string;
+      takeCount?: number;
+      maxId?: number;
+      language?: string;
+    } = {}
+  ): Promise<{ username: string; response: JsonObject }> {
+    const takeCount = options.takeCount ?? 20;
+    if (!Number.isSafeInteger(takeCount) || takeCount < 1 || takeCount > 50) {
+      throw new XpuojError("INVALID_ARGUMENT", "submission count must be between 1 and 50");
+    }
+    const maxId = options.maxId;
+    if (maxId !== undefined) {
+      positiveInteger(maxId, "maximum submission ID");
+    }
+    const username = await this.getCurrentUsername();
+    const common: JsonObject = {
+      locale: options.locale ?? "zh_CN",
+      submitter: username,
+      takeCount,
+      ...(maxId === undefined ? {} : { maxId }),
+      ...(options.language?.trim() ? { codeLanguage: options.language.trim() } : {})
+    };
+    if (target?.kind === "contest") {
+      return {
+        username,
+        response: await this.post("contest/play/querySubmissions", {
+        ...common,
+        contestId: target.contestId,
+        problemOrder: target.problemOrder
+        })
+      };
+    }
+    if (target?.kind === "contest-all") {
+      const contest = await this.post("contest/getContestProblems", {
+        contestId: target.contestId,
+        locale: options.locale ?? "zh_CN"
+      });
+      const problems = Array.isArray(contest.problems)
+        ? contest.problems.filter(isRecord)
+        : [];
+      const orders = problems.flatMap((problem) => {
+        const order = problem.order;
+        return typeof order === "number" && Number.isSafeInteger(order) && order > 0
+          ? [order]
+          : [];
+      });
+      const responses = await Promise.all(
+        orders.map(async (problemOrder) => {
+          const response = await this.post("contest/play/querySubmissions", {
+            ...common,
+            contestId: target.contestId,
+            problemOrder
+          });
+          const submissions: JsonObject[] = Array.isArray(response.submissions)
+            ? response.submissions.filter(isRecord).map((submission): JsonObject => ({
+                ...submission,
+                contestId: target.contestId,
+                contestProblemOrder: problemOrder
+              }))
+            : [];
+          return { response, submissions };
+        })
+      );
+      const submissions = responses
+        .flatMap(({ submissions }) => submissions)
+        .sort((left, right) => Number(right.id ?? 0) - Number(left.id ?? 0));
+      return {
+        username,
+        response: {
+          submissions: submissions.slice(0, takeCount),
+          hasSmallerId:
+            submissions.length > takeCount ||
+            responses.some(({ response }) => response.hasSmallerId === true)
+        }
+      };
+    }
+    if (target?.kind === "ordinary") {
+      const problem = await this.getProblem(target, options.locale);
+      return {
+        username,
+        response: await this.post("submission/querySubmission", {
+        ...common,
+        problemId: ordinaryProblemRealId(problem, target.displayId)
+        })
+      };
+    }
+    return { username, response: await this.post("submission/querySubmission", common) };
   }
 
   async getContestScoreboard(
@@ -690,6 +838,37 @@ export function summarizeSubmission(detail: JsonObject): SubmissionSummary {
       message: compile.message
     },
     testcases
+  };
+}
+
+export function summarizeSubmissionList(
+  response: JsonObject,
+  username: string
+): SubmissionListSummary {
+  const rawSubmissions = Array.isArray(response.submissions) ? response.submissions : [];
+  return {
+    username,
+    hasOlder: typeof response.hasSmallerId === "boolean" ? response.hasSmallerId : null,
+    hasNewer: typeof response.hasLargerId === "boolean" ? response.hasLargerId : null,
+    submissions: rawSubmissions.filter(isRecord).map((submission) => {
+      const problem = isRecord(submission.problem) ? submission.problem : {};
+      return {
+        submissionId: submission.id,
+        status: submission.status,
+        score: submission.score,
+        displayScore: submission.displayScore,
+        language: submission.codeLanguage,
+        submittedAt: submission.submitTime,
+        timeUsed: submission.timeUsed,
+        memoryUsed: submission.memoryUsed,
+        problem: {
+          displayId: problem.displayId,
+          contestId: submission.contestId,
+          order: submission.contestProblemOrder ?? problem.order,
+          title: submission.problemTitle
+        }
+      };
+    })
   };
 }
 

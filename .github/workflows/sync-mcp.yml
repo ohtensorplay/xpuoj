@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,3 +30,83 @@ jobs:
             README.md
             .agents/plugins/marketplace.json
             plugins/xpuoj/**
+
+  repository-oidc-boundary:
+    name: OIDC boundary (${{ matrix.repo_type }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo_type: model
+            repo_id: mega/oidc-boundary-model
+          - repo_type: dataset
+            repo_id: mega/oidc-boundary-dataset
+          - repo_type: space
+            repo_id: mega/oidc-boundary-space
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Prepare boundary marker
+        shell: bash
+        env:
+          REPO_TYPE: ${{ matrix.repo_type }}
+        run: |
+          set -euo pipefail
+          mkdir -p ".oidc-boundary/${REPO_TYPE}"
+          printf '%s\n' \
+            "repo_type=${REPO_TYPE}" \
+            "source=${GITHUB_REPOSITORY}@${GITHUB_SHA}" \
+            "run=${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}" \
+            > ".oidc-boundary/${REPO_TYPE}/boundary.txt"
+
+      - name: Publish through GitHub OIDC
+        uses: ohtensorplay/hub-sync@v1
+        with:
+          mega_repo_id: ${{ matrix.repo_id }}
+          mega_oidc_resource: mega
+          repo_type: ${{ matrix.repo_type }}
+          subdirectory: .oidc-boundary/${{ matrix.repo_type }}
+          commit_message: OIDC boundary run ${{ github.run_id }}/${{ github.run_attempt }}
+
+  bucket-oidc-boundary:
+    name: OIDC boundary (bucket)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: 0.11.16
+          enable-cache: true
+
+      - name: Publish and read back through GitHub OIDC
+        shell: bash
+        env:
+          MEGA_OIDC_RESOURCE: mega
+        run: |
+          set -euo pipefail
+          mkdir -p .oidc-boundary/bucket .oidc-boundary/readback
+          printf '%s\n' \
+            "resource=bucket" \
+            "source=${GITHUB_REPOSITORY}@${GITHUB_SHA}" \
+            "run=${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}" \
+            > .oidc-boundary/bucket/boundary.txt
+          mega=(uvx --from megatensors mega)
+          "${mega[@]}" buckets create mega/oidc-boundary-artifacts --exist-ok
+          "${mega[@]}" buckets sync \
+            .oidc-boundary/bucket \
+            mega://buckets/mega/oidc-boundary-artifacts
+          "${mega[@]}" buckets sync \
+            mega://buckets/mega/oidc-boundary-artifacts \
+            .oidc-boundary/readback
+          cmp \
+            .oidc-boundary/bucket/boundary.txt \
+            .oidc-boundary/readback/boundary.txt
